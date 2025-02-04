@@ -1,0 +1,2118 @@
+---
+title: JACS papers database analysis
+output:
+  html_document:
+    css: styles.css
+    df_print: paged
+    highlight: haddock
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+    code_fold: show
+  
+---
+
+```{r setup_chunks, include=FALSE}
+knitr::opts_chunk$set( echo = TRUE, message=FALSE, warning=FALSE, dpi=150)
+```
+
+# Introduction
+
+The database **JACS Papers 1996 - 2016**  contains data on publications in the Journal of the American Chemical Society (JACS) from 1996 to 2016 and is available at <https://www.kaggle.com/datasets/mathewsavage/jacs/data>
+
+JACS is one of the leading journals in the field of chemical science with a 2-year impact factor of 14.5 and 568,486 citations (2023). It publishes cutting-edge research papers in a variety of areas of chemistry, focusing on the most relevant trends in modern science.This is the JACS home page:
+<https://pubs.acs.org/journal/jacsat>. 
+
+The vast majority of JACS publications are articles and communications. Articles are full-length research papers, typically describing a major study. Communications, on the other hand, are shorter publications, designed to quickly report new results or groundbreaking discoveries.
+
+The **JACS Papers 1996–2016** database contains citation counts for papers; this number shows how many times a paper has been cited in other publications. Why it matters.  The number of citations affects other metrics such as the author's Hirsch index  (h-index), which shows how successful a research is and how it is recognized in the scientific world.
+
+
+The goal of this project is to perform an exploratory data analysis of the **JACS Papers 1996–2016** database as:  
+***question*** <span>&#8594;</span> ***SQL query*** to find the answer <span>&#8594;</span> ***R tools*** to visualize the results.
+
+<hr style="border:0.8px solid whitesmoke">
+
+# Tools
+ The following R packages are used in this project:  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#8226;</span> &nbsp;&nbsp;  [DBI]{.package_name} and 
+[RSQLite]{.package_name}  to make SQL queries;  
+&nbsp;&nbsp;&nbsp;&nbsp; <span>&#8226;</span> &nbsp;&nbsp;   [ggplot2]{.package_name}, [ggrepel]{.package_name} and
+[ggwordcloud]{.package_name} for plots;  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#8226;</span> &nbsp;&nbsp;  [ggpubr]{.package_name} and 
+ [gt]{.package_name} to make tables and  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#8226;</span>  &nbsp;&nbsp;  [tidytext]{.package_name} and 
+[stringr]{.package_name}  for text analysis.    
+<br>
+
+SQL queries were formatted using **redgate**, right-aligned.
+```{r libraries}
+library(rmarkdown)
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(ggpubr)
+library(ggwordcloud)
+library(ggrepel)
+library(dplyr)
+library(knitr)
+library(gt)
+library(tidytext)
+library(stringr)
+```
+
+```{r table_plot_settings}
+
+#                Table title settings:
+title_family = "system-ui"
+title_color = "#708090"
+
+
+#                Functions for table visualization.
+
+# (1) query_to_table() function converts SQL query or the output of dbGetQuery() 
+# into a text table using the ggtexttable() function from ggpubr; and will 
+# be used to print two tables side by side or a table and a graph.
+ 
+query_to_table <- function(
+    query, table_title, n = NA, col_names = NA, col_padding = 4, font_size = 10){
+  
+  if( is.character(query) ){
+    df = dbGetQuery( JACSpapersDB, query )
+  }else{
+    df = query
+  }
+  
+  if(!is.na(n)){
+    df = df[ 1:n, ]
+  }
+  
+  last_row = nrow(df)+1
+  
+  if( any(is.na(col_names)) ){
+    col_names = colnames(df)
+  }
+  
+  df %>%
+    ggtexttable(rows = NULL,
+                cols = col_names,
+               theme = ttheme("blank", base_size = font_size-2,
+                              padding = unit(c(col_padding, 4), "mm"),
+                              colnames.style = colnames_style(
+                                color = "black",
+                                face = "bold",
+                                size = font_size-2,
+                                fill = "white",
+                                linewidth = 1,
+                                linecolor = "white"))) %>%
+    tab_add_hline(at.row = 1:2, row.side = "top", 
+                  linewidth = 1.5, linecolor = "gray") %>%
+    tab_add_hline(at.row = last_row, row.side = "bottom",
+                  linewidth = 1.5, linecolor = "gray") %>%
+    tab_add_title(text = table_title, 
+                  face = NULL, 
+                  color = title_color, 
+                  size = font_size,
+                  family = title_family )
+}
+
+# (2) () function converts SQL query or the output of dbGetQuery() 
+# into a gt_tbl table using the gt() function from gt library;
+# and will be used to print one table.
+query_to_gt_table <- function(query, table_title, n = NA, col_padding = 4, font_size = 14){
+  
+  if( is.character(query) ){
+    df = dbGetQuery( JACSpapersDB, query )
+  }else{
+    df = query
+  }
+  
+  if(!is.na(n)){
+    df = df[ 1:n, ]
+  }
+  
+  gt( df) %>% 
+    tab_header(md(paste('<span style="color:#708090; font-family:system-ui; ">',
+                         table_title,'</span>'))) %>%
+    tab_options(table.font.size = font_size,
+                table.font.names = "Helvetica",
+                heading.title.font.size = font_size+1,
+                heading.align = "left",
+                column_labels.padding.horizontal = col_padding,
+                data_row.padding = 4,
+                table.border.top.color = "white",
+                table_body.hlines.color = "white",
+                table.border.bottom.width = 0.6,
+                column_labels.font.weight = "bold",
+                column_labels.border.top.width = 0.6,
+                column_labels.border.bottom.width = 0.6 )
+}
+
+#                          Plot themes
+# One plot.
+themes1 <- theme_light(base_size = 6 ) + 
+  theme(plot.title = element_text( size = rel(1.2), 
+                                   family = title_family , 
+                                   color = title_color),
+        axis.title = element_text( size = rel(1.1),
+                                   family = title_family))
+# Two plots.
+themes2 <- theme_light( base_size = 7) + 
+  theme(plot.title = element_text( size = rel(1.3),
+                                   family = title_family ,
+                                   color = title_color),
+        axis.title = element_text( size = rel(1.2),
+                                   family = title_family))
+
+#                            colors
+articles_color <- "#FFA07A"
+communications_color <- "#5CB3FF"
+dark_color <- "#2F4F4F"
+light_color <- "#CFECEC"
+citations_color <- "#CCCCFF"
+points_color <- "#446499" 
+cell_highlight_pink <- "#ffe8f3"
+cell_highlight_blue <-  "#eaf4ff"
+```
+
+<hr style="border:0.8px solid whitesmoke">
+
+# Database overview
+There are three related tables in **JACS Papers 1996–2016** database.
+
+```{r list_tables}
+
+# To generate the HTML report from JACSpapers_1996_2016.Rmd file, 
+# we need to download the database.sqlite file from
+# https://www.kaggle.com/datasets/mathewsavage/jacs/data 
+# and save it in the projects folder.
+
+# Create a connection to the 'database.sqlite'  file (saved in the projects folder).
+JACSpapersDB <- dbConnect(RSQLite::SQLite(), "database.sqlite")  
+
+#  And list tables of JACSpapers 1996–2016 database:
+dbListTables(JACSpapersDB)      
+```
+Information about publications is stored in the [Paper]{.table_name} table, authors' names are stored in the [Authors]{.table_name} table, and [Paper_Authors]{.table_name} is used to match rows from the other two tables.
+
+<hr style="border:0.8px solid whitesmoke">
+
+## Paper_Authors 
+
+First, let's look at the [Paper_Authors]{.table_name} table and check for missing values.
+
+```{r Paper_Authors_missing_values, fig.height=1.5}
+
+Title <- "Paper_Authors table, first three rows"
+
+Query1 <- 
+"
+SELECT *
+  FROM Paper_Authors
+ LIMIT 3; 
+"
+
+##         Missing values
+# We need to check for missing values in three tables, 
+# so we define a function that takes a table name and returns a table showing 
+# the number of NAs for fields that may have missing values: 
+# fields that have a value of 0 in the "notnull" column in the information table.
+
+count_NAs <- function(table_name){
+  
+  # make a query "PRAGMA table_info(table_name);" that prints information table
+  Query_table_info = paste("PRAGMA table_info(", table_name, ");") 
+  
+  Table_Info_notnull0 =  dbGetQuery( JACSpapersDB, Query_table_info) %>% 
+    filter(notnull == 0) %>%
+    select(name, notnull)
+  
+  # this query counts missing values in the fields listed in Table_Info_notnull0
+  # as "sum(field IS NULL) AS field" and use sapply() function on all fields 
+  # that have values  'notnull == 0' in  the information table. 
+  Query_count_NAs = paste("SELECT",  
+                           toString(sapply(Table_Info_notnull0$name, function(x){paste("sum(", x, "IS NULL) AS", x)} ) ),
+                           "FROM ",  table_name, ";")
+  
+  dbGetQuery( JACSpapersDB, Query_count_NAs)
+}
+
+# Here and below, we use the ggarrange() and query_to_table() functions 
+# to print two or more tables or table + graph.
+ggarrange(query_to_table(query = Query1, table_title = Title,
+                         col_padding = 20), 
+          query_to_table(count_NAs("Paper_Authors"),
+                         table_title = "Missing values \n in the Paper_Authors table",
+                         col_padding = 15), 
+          align = "v")
+```
+
+The first three rows are shown on the left, there are two fields:
+[paperID]{.column_name} and [authorID]{.column_name}  (foreign keys). 
+The table on the right contains the number of missing values in the corresponding columns: 
+there are no missing data in this table.  
+Next, we check whether the foreign keys in the [Paper_Authors]{.table_name} table match
+the primary keys in the other two tables. 
+The following table summarizes the number of author IDs in the [Authors]{.table_name}  and
+[Paper_Authors]{.table_name} tables, and the number of paper IDs
+in the [Papers]{.table_name} and [Paper_Authors]{.table_name} tables.
+
+```{r ID_counts, fig.height=1}
+
+# We start by comparing the number of author IDs in the Authors and Paper_Authors tables,
+# and the number of paper IDs in the Papers and Paper_Authors tables.
+
+Title <- "Counts of author IDs and paper IDs in Paper_Authors, Papers and Authors tables"
+
+Query2 <- 
+"
+WITH Paper_Authors_ID_counts
+  AS (SELECT count(DISTINCT (authorID)) AS author_count_Paper_Authors,
+             count(DISTINCT (paperID)) AS paper_count_Paper_Authors
+        FROM Paper_Authors),
+     Papers_ID_counts
+  AS (SELECT count(DISTINCT (paperID)) AS paper_count_Paper,
+             count(*) AS rows_Paper
+        FROM Papers),
+     Authors_ID_counts
+  AS (SELECT count(DISTINCT (authorID)) AS author_count_Authors,
+             count(*) AS rows_Authors
+        FROM Authors)
+        
+SELECT Authors_ID_counts.rows_Authors,
+       Authors_ID_counts.author_count_Authors,
+       Paper_Authors_ID_counts.author_count_Paper_Authors,
+       Papers_ID_counts.rows_Paper,
+       Papers_ID_counts.paper_count_Paper,
+       Paper_Authors_ID_counts.paper_count_Paper_Authors
+  FROM Paper_Authors_ID_counts,
+       Papers_ID_counts,
+       Authors_ID_counts;
+"
+
+ID_Counts <- dbGetQuery( JACSpapersDB, Query2) 
+
+query_to_gt_table(ID_Counts, Title, col_padding = 20) %>%
+    data_color( columns = 5:6, 
+                rows = everything(),
+                palette = cell_highlight_pink) %>%
+    tab_spanner(label = "authorID count", columns = starts_with("author")) %>%
+    tab_spanner(label = "paperID count", columns = starts_with("paper")) %>%
+    cols_label(rows_Authors	= "rows, \n  Authors",
+               author_count_Authors	= "Authors",
+               author_count_Paper_Authors	= "Paper_Authors",
+               rows_Paper	= "rows, \n Paper",
+               paper_count_Paper	= "Paper",
+               paper_count_Paper_Authors	= "Paper_Authors") %>%
+    cols_align("center")
+  
+ 
+    
+  
+```
+  
+<br>
+The [Authors]{.table_name} table lists `r str_replace(ID_Counts$rows_Authors, "(\\d+)(\\d{3}$)", "\\1,\\2")`  authors and
+[Papers]{.table_name} contains information about `r str_replace(ID_Counts$rows_Paper, "(\\d+)(\\d{3}$)", "\\1,\\2")` publications. 
+However `r ID_Counts$paper_count_Paper - ID_Counts$paper_count_Paper_Authors` 
+ paper IDs are missing in the [Paper_Authors]{.table_name} table.
+Here is an example of publications that do not have a matching paper IDs in the
+[Paper_Authors]{.table_name}  table.
+
+```{r paperID_check}
+
+Query3 <- 
+"
+SELECT paperID,
+       type,
+       title
+  FROM Papers
+ WHERE NOT EXISTS (   SELECT DISTINCT (paperID) AS paperID
+                        FROM Paper_Authors
+                       WHERE Papers.paperID = Paper_Authors.paperID)
+ LIMIT 3;
+"
+
+query_to_gt_table(Query3, "")
+```
+
+<br>
+All authors listed in [Authors]{.table_name} have [authorID]{.column_name} in [Paper_Authors]{.table_name} table.
+There are 0 author ids that do not match the same id in both tables:
+
+```{r authorID_check}
+
+# Even though we have the same number of authorIDs in Authors and Paper_Authors (120670), 
+# we still check if the 'authorID' matches in both tables: if we filter out all matching 
+# author IDs, we get 0 remaining rows.
+
+Query4 <- 
+"
+SELECT authorID
+  FROM Authors
+EXCEPT
+SELECT DISTINCT (authorID) AS authorID
+  FROM Paper_Authors;
+"
+
+dbGetQuery(JACSpapersDB, Query4)
+```
+
+<hr style="border:0.8px solid whitesmoke">
+
+## Authors 
+The  table [Authors]{.table_name} contains the authors' names in three columns: 
+[forename]{.column_name}, [initials]{.column_name}, and [surname]{.column_name}, as well as an 
+[authorID]{.column_name}  column with a primary key (a unique identifier for each author).
+
+```{r Authors_head}
+
+Title <- "Authors table, first three rows"
+
+Query5 <- 
+"
+SELECT *
+  FROM Authors
+ LIMIT 3;
+"
+
+query_to_gt_table(Query5,  Title, col_padding = 20) %>%
+  cols_align("center")
+```
+
+<br>
+The [orcidID]{.column_name} and [title]{.column_name} columns are empty fields in the [Authors]{.table_name} table: the number of missing values is equal to the number of rows in this table. 
+
+```{r Authors_NAs}
+
+# Find the number of missing values using the count_NAs() function we defined above.
+
+Title <- "Missing values in the Authors table"
+
+query_to_gt_table(count_NAs("Authors"), table_title = Title, col_padding = 20) %>%
+  cols_align("center")
+```
+
+<hr style="border:0.8px solid whitesmoke">
+
+## Papers 
+
+The main data we will focus on in this project is stored in the [Papers]{.table_name} table. 
+Below are the column names and descriptions for this table.
+
+```{r Papers}
+
+# For printing titles and abstracts, we truncate these fields to 25 characters 
+# plus one whole word, and use the date() function to print only the date part 
+# for the received, publishedOnline, publishedPrint and scrapeDT columns.
+
+Query6 <-
+"
+SELECT paperID,
+       type,
+       substr(title, 1, 25 + instr(substr(title, 25, 20), ' ') - 1) AS title,
+       substr(abstract, 1, 25 + instr(substr(abstract, 25, 20), ' ') - 1) AS abstract,
+       volume,
+       issue,
+       startpg,
+       endpg,
+       date(received) AS received,
+       date(publishedOnline) AS publishedOnline,
+       date(publishedPrint) AS publishedPrint,
+       authorChoiceOA,
+       editorChoiceOA,
+       views,
+       citations,
+       date(scrapeDT) AS scrapeDT
+  FROM Papers;
+"
+
+Papers <- dbGetQuery( JACSpapersDB, Query6  )
+```
+
+--------------------------------------------------------------------------
+|                |                                                        |
+|--------------------|:-------------------------------------------------------|
+| [paperID]{.column_name}  | primary key (a unique identifier for each publication) |
+| [DOI]{.column_name}      | the Digital Object Identifier  
+| [type]{.column_name}     | the publication type can be one of *`r unique(Papers$type)`* |
+| [title]{.column_name}    | publication title                                                                                                                                 |
+| [abstract]{.column_name} | a short summary of the paper                                                                                                                      |
+| [volume]{.column_name}, [issue]{.column_name} | publication information                                                                                                                           |
+| [startpg]{.column_name}, [endpg]{.column_name} | start and end pages                                                                                                                               |
+| [received]{.column_name}  | date of receipt of paper                                                                                                                   |
+| [publishedOnline]{.column_name} | when it was available online                                                                                                                      |
+| [publishedPrint]{.column_name}  | journal printing date                                                                                                                    |
+| [views]{.column_name}           | number of views                                                                                                                          |
+| [citations]{.column_name}       | how many times the publication has been cited                                                                                                    |
+| [authorChoiceOA]{.column_name}  | one of *`r unique(Papers$authorChoiceOA)`*. If this field has a value of *1*, the publication is “author's choice” and is open access   |
+| [editorChoiceOA]{.column_name}  | one of *`r unique(Papers$editorChoiceOA)`*. Values of *1* indicate that this is an "editor's choice" article and is open access  |
+| [scrapeDT]{.column_name}        | date and time when the data was pulled from the website, here we have omitted the time part; there are 3 dates in this field: *`r unique(Papers$scrapeDT)`* |
+
+```{r Papers_3rows}
+
+Title <- "Papers table, first three rows"
+
+query_to_gt_table(Papers, table_title = Title, n = 3, col_padding = 20) %>%
+  cols_align("center")
+```
+
+<hr style="border:0.8px solid whitesmoke">
+
+### Data validation
+
+Before we continue analyzing the data, we will review the data and find rows that may need to be omitted.
+
+**Missing values**
+
+```{r Papers_missing_values1, fig.height=1}
+
+# Find the number of missing values using the count_NAs() function.
+
+Title <- "Number of missing values in the Papers table"
+
+query_to_gt_table( count_NAs("Papers"), table_title = Title, col_padding = 20) %>%
+  cols_align("center")
+```
+
+<br>
+There are missing  [abstract]{.column_name}s
+and [received]{.column_name} dates in the [Papers]{.table_name} table.
+The table below shows how the missing values are distributed across publication types.
+
+```{r Papers_missing_values2, fig.height=3}
+
+Title <- "Missing abstracts and received dates by publication type"
+
+Query7 <- 
+"
+SELECT type,
+       sum(abstract IS NULL) AS abstract_missing_count,
+       round(avg(abstract IS NULL)*100, 1) AS abstract_missing_percent,
+       sum(received IS NULL) AS received_missing_count,
+       round(avg(received IS NULL)*100, 1) AS received_missing_percent
+  FROM Papers
+ GROUP BY type 
+"
+
+Papers_count_NAs <- dbGetQuery(JACSpapersDB, Query7) 
+
+query_to_gt_table(Papers_count_NAs, table_title = Title, col_padding = 35) %>%
+    data_color( columns = c(3, 5), 
+                method = "numeric",
+                palette = c("white", cell_highlight_pink, cell_highlight_blue ))%>%
+    tab_spanner(label = "abstract", columns = starts_with("abstract")) %>%
+    tab_spanner(label = "received", columns = starts_with("received")) %>%
+    cols_label(abstract_missing_count = "count",
+               abstract_missing_percent = "%",
+               received_missing_count = "count", 
+               received_missing_percent = "%") %>%
+    cols_align("center")
+```
+
+
+`r str_remove(paste( Papers_count_NAs$abstract_missing_percent[which(Papers_count_NAs$type ==  "Communication")], "%"), " ")` 
+ of communications do not have the abstracts, and it appears that
+ *`r Papers_count_NAs$type[which(Papers_count_NAs$abstract_missing_percent >90 )]` *
+do not require the [abstract]{.column_name} and  [received]{.column_name} date. 
+
+<hr style="border:0.8px solid whitesmoke">
+
+**Pages**  
+
+There are two fields in [Papers]{.table_name} table with pages:  [startpg]{.column_name} is the page where the paper starts, it can't be larger than [endpg]{.column_name} where the paper ends. We also need to check the difference between the start and end page: it is less likely that the publication will be more than 50 pages long or that the articles will be less than one page long.
+
+```{r Papers_pages}
+
+# Find rows where 
+#                 the start page ('startpg') is larger than end page ('endpg'), or
+#                 the publications are longer than 50 pages, or
+#                 articles less than 1 page long.
+
+Title = "Papers table. Rows where there may be incorrect pages"
+
+Query8 <-
+"
+SELECT paperID,
+       type,
+       substr(title, 1, 25 + instr(substr(title, 25, 20), ' ') - 1) AS title,
+       startpg,
+       endpg,
+       date(received) AS received,
+       date(publishedOnline) AS publishedOnline,
+       date(publishedPrint) AS publishedPrint
+  FROM Papers
+ WHERE endpg           < startpg
+    OR endpg - startpg > 50
+    OR endpg - startpg < 1
+   AND type LIKE 'Article';
+"  
+
+query_to_gt_table(query = Query8, table_title = Title) 
+```
+
+There is one book review where the final page is smaller than the initial page and 4 articles with the title “New Editor Information”.
+
+<hr style="border:0.8px solid whitesmoke">
+
+**Dates**
+
+There are three date fields in the [Papers]{.table_name} table associated with publications. 
+The [received]{.column_name}  is the date when a paper was received, 
+[publishedOnline]{.column_name} is the date when it was published online, and 
+[publishedPrin]{.column_name} is when a journal was printed.
+The following table shows the number of rows in the [Papers]{.table_name} table where 
+the publish dates are earlier than the receive dates.
+
+```{r dates }
+
+# Find the number of rows where the received date is greater than the published 
+# online date and the received date is greater than the published print date
+
+Title <- "Papers table. Counts of rows where the received date is greater than \n 
+the published online date or the published print date"
+
+Query9 <-
+"
+SELECT sum(received > publishedOnline
+           AND received IS NOT NULL
+           AND publishedOnline IS NOT NULL) AS publishedOnline_earlier,
+       sum(received > publishedPrint
+           AND received IS NOT NULL
+           AND publishedPrint IS NOT NULL) AS publishedPrint_earlier
+  FROM Papers;
+"
+
+ query_to_gt_table(query = Query9, table_title = Title, col_padding = 15) %>%
+   cols_align("center") %>%
+   cols_label(publishedOnline_earlier = "published online before received",
+              publishedPrint_earlier = "print date earlier than received")
+```
+
+**Dates range**
+```{r dates_rang}
+
+Title <- "Papers table. Maximum and minimum values for date fields"
+
+Query10 <-
+"
+SELECT min(date(received)) AS received_min,
+       max(date(received)) AS received_max,
+       min(date(publishedOnline)) AS publishedOnline_min,
+       max(date(publishedOnline)) AS publishedOnline_max,
+       min(date(publishedPrint)) AS publishedPrint_min,
+       max(date(publishedPrint)) AS publishedPrint_max
+  FROM Papers;
+"
+
+Dates_Range <- dbGetQuery( JACSpapersDB, Query10)
+
+query_to_gt_table(Dates_Range, Title, col_padding = 35) %>%
+  data_color( columns = c(received_min,publishedPrint_min), 
+              rows = everything(),
+              palette = cell_highlight_blue)%>%
+  tab_spanner(label = "received", columns = starts_with("received")) %>%
+  tab_spanner(label = "publishedOnline", columns = starts_with("publishedOnline")) %>%
+  tab_spanner(label = "publishedPrint", columns = starts_with("publishedPrint")) %>%
+  cols_label(received_min = "first",
+             received_max = "last",
+             publishedOnline_min = "first", 
+             publishedOnline_max = "last", 
+             publishedPrint_min = "first", 
+             publishedPrint_max = "last"  ) %>%
+  cols_align("center")
+```
+
+It is interesting to note that in this dataset, the first date in [received]{.column_name} column is
+`r str_replace_all(Dates_Range$received_min, "-", "/")`
+, and the first date in [publishedPrint]{.column_name}   is 
+`r str_replace_all(Dates_Range$publishedPrint_min, "-", "/")`.
+
+<hr style="border:0.8px solid whitesmoke">
+
+# JACS format
+Now let's use SQL queries to answer some questions on **JACS Papers 1996–2016** database.
+
+
+## Type
+
+The vast majority of JACS publications are articles and communications.
+There are also reviews of books and computer software and some other types of papers.
+Perspectives are larger articles that present the author's opinion on current scientific problems,
+theories and may be related to fundamental topics or practical applications. 
+Spotlights are short publications that aim to highlight and summarize recent publications in the journal.
+
+```{r types_plot, fig.width = 4, fig.height = 2}
+
+# In this query we find the count and percentage of different types of publications to plot a bar chart.
+# We change the output type of the count() to REAL to avoid rounding the division results to an integer
+# when we calculate the percentage.
+
+Title_plot <- "Types of publications in JACS, 1996 - 2016"
+
+Query11 <-
+"
+SELECT type,
+       count(type) AS type_count,
+       ROUND(CAST(count(type) AS REAL) * 100 / (SELECT CAST(count(*) AS REAL)FROM Papers), 1) AS type_percent
+  FROM Papers
+ GROUP BY type;
+"
+
+Types <- dbGetQuery( JACSpapersDB, Query11) %>%
+  # we change the order of the levels of the variable 'type' to plot the graph in  
+  # descending order of the number of publications of different types
+  mutate(type = reorder(type, type_count))
+
+Types %>% 
+  ggplot( aes(y = type , x = type_count)) +  
+  geom_col( fill = light_color, color = dark_color, linewidth = 0.2) + 
+  geom_text(aes(label =  paste(type_percent , "%"),  y = type ),  
+            size = 1.8, hjust = -0.3,
+            color = dark_color) +
+  labs( title = Title_plot,
+        x = "count") +
+  xlim( c(0, 35000)) + 
+  themes1 + theme(plot.margin = unit(c(10,30,10,50), "pt"),
+                  axis.title.y = element_blank()  ) 
+```
+
+<hr style="border:0.8px solid whitesmoke">
+
+## Volumes, issues 
+
+[How many volumes, issues and papers are published annually and ]{.question}  
+[how many times JACS is printed each year?]{.question} 
+
+```{r count_papers_table}
+
+# To find the number of journal prints per year, we count the number of distinct
+# 'publishedPrint' dates. In the subquery, we add a new variable 'type_aco', 
+# which has the publication type, where all publications except articles and 
+# communications fall into one category 'Other'. This will be used to plot 
+# the number of articles and communications along with the total annual
+# publication count.
+
+Query12 <- 
+"
+SELECT strftime('%Y', publishedPrint) AS year,
+       count(DISTINCT (volume)) AS volumes,
+       count(DISTINCT (issue)) AS issues,
+       count(DISTINCT (publishedPrint)) AS publishedPrint,
+       count(*) AS publications,
+       sum(type_aco LIKE 'Article') AS articles,
+       sum(type_aco LIKE 'Communication') AS communications
+  FROM (  SELECT publishedPrint,
+                 volume,
+                 issue,
+                 CASE
+                      WHEN type LIKE 'Article' THEN 'Article'
+                      WHEN type LIKE 'Communication' THEN 'Communication'
+                      ELSE 'Other'
+                  END AS type_aco
+             FROM Papers)
+GROUP BY strftime('%Y', publishedPrint);
+" 
+
+Count_Papers <- dbGetQuery( JACSpapersDB, Query12 )
+```
+
+On average, JACS publishes
+`r str_replace(round(mean(Count_Papers$publications)), "(\\d+)(\\d{3}$)", "\\1,\\2")` 
+papers annually in `r mean(Count_Papers$volume)` volumes, with `r mean(Count_Papers$issue)` 
+issue per year.
+
+```{r count_papers_plot, fig.height = 2.5}
+
+Title_plot1 <- "Number of publications per year"
+
+p1 <- Count_Papers %>%
+   ggplot(aes(year, publications, color = "publications")) +
+   geom_point() +
+   geom_point(aes(year, articles, color = "articles")) +
+   geom_point(aes(year, communications, color = "communications")) +
+   labs(x = "year", y = "number of publications") +
+   ggtitle(Title_plot1) +
+   scale_color_manual(values = c( "articles" = articles_color, 
+                                  "communications" = communications_color,
+                                  "publications" = points_color),
+                      labels = c("articles", "communications", "all publications")) +
+   themes2 +
+   theme(plot.margin = unit(c(10, 0, 0, 0), "pt"),
+         axis.text.x = element_text(angle = 90) ,
+         legend.position = "bottom",
+         legend.title = element_blank(),
+         legend.text = element_text(size = 7))  
+
+Title_plot2 <- "Number of prints per year"
+  
+p2 <- Count_Papers %>%
+  ggplot(aes(year, publishedPrint)) +
+  geom_point(color = points_color) +
+  ggtitle(Title_plot2) +
+  ylab("number of prints") +
+  themes2 +
+  theme(plot.margin = unit(c(10, 10, 20, 30), "pt"),
+        axis.text.x = element_text(angle = 90) ) 
+  
+ggarrange(p1, p2, ncol = 2 , align = "v")
+```
+
+
+
+<hr style="border:0.8px solid whitesmoke">
+
+## Pages
+
+[How many pages are there in different publication types?]{.question}
+
+We will exclude from the calculations one book review where the final page is smaller than the initial page, as well as the "New Editor Information" articles.
+
+```{r pages_table}
+
+# Find the difference between the first and last pages for different publication types.
+
+Title <- "Length of different types of publications"
+
+Query13 <- 
+"
+SELECT type,
+       round(avg(endpg - startpg +1)) AS paper_length
+  FROM (  SELECT type,
+                 startpg,
+                 endpg
+            FROM Papers
+           WHERE endpg >= startpg
+             AND title NOT LIKE 'New Editor Information')
+GROUP BY type;
+"
+
+Pages <- dbGetQuery(JACSpapersDB, Query13)
+
+query_to_gt_table(Pages, table_title = Title) %>%
+  cols_label(type = "type", paper_length = "paper length, pages")
+```
+
+*Communications* are typically `r Pages$paper_length[which(Pages$type == "Communication")]`  pages long, while  *Articles* are `r Pages$paper_length[which(Pages$type == "Article")]` pages, and a *Perspective* is the longest publication type, with 
+`r Pages$paper_length[which(Pages$type == "Perspective")]` pages.
+
+It is interesting to find the largest article in JACS published from 1996 to 2016.
+```{r}
+
+# Find the article with the largest difference between the end and start pages.
+
+Query14 <-
+"
+SELECT startpg,
+       endpg,
+       endpg - startpg AS paper_length,
+       type,
+       title
+  FROM Papers
+ WHERE endpg - startpg = (SELECT max(endpg - startpg) FROM Papers)
+"
+
+query_to_gt_table(Query14, "", col_padding = 25) %>%
+  data_color( columns = paper_length, 
+              rows = everything(),
+              palette = cell_highlight_blue) %>%
+  tab_spanner(label = "page", columns = ends_with("pg")) %>%
+  cols_label(startpg = "first",	
+             endpg = "last",
+             paper_length = "number of pages") %>%
+  cols_align("center")
+```
+
+
+
+<hr style="border:0.8px solid whitesmoke">
+
+##   Dates
+[How long does it takes to publish a paper?]{.question}
+
+Recall that there are very few missing values in the [received]{.column_name} column for 
+*`r Papers_count_NAs$type[which(Papers_count_NAs$received_missing_percent == 0)]`*,
+but over 96% of [received]{.column_name} dates are missing in other JACS publication types.
+Therefore we will find the time required to publish only for articles, communications, and perspectives.
+
+
+In `r str_replace(sum(Papers$received > Papers$publishedPrint, na.rm = TRUE) + sum(Papers$received > Papers$publishedOnline, na.rm = TRUE), "(\\d+)(\\d{3}$)", "\\1,\\2")` rows  the publication date of the paper is earlier than the date it was received. An example of such data, first 5 lines:
+```{r dates_table1}
+
+# This query shows an example where the received date is later than publishedOnline
+# or publishedPrint.
+
+Query15 <- 
+"
+SELECT paperID,
+       type,
+       volume,
+       substr(title, 1, 25) AS title,
+       DATE(received) AS received,
+       DATE(publishedOnline) AS publishedOnline,
+       DATE(publishedPrint) AS publishedPrint
+  FROM Papers
+ WHERE received IS NOT NULL
+   AND received > publishedOnline
+    OR received IS NOT NULL
+   AND received > publishedPrint
+ LIMIT 5;
+"
+
+query_to_gt_table(query = Query15, table_title = "")
+```
+
+The above "[Number of prints per year]{.figure_name}" graph shows that in 1996 there were only two dates in the [publishedPrint]{.column_name} column, after that the journal was published monthly until 2009. That's why we see this confusion in dates. So to calculate the time it takes to publish, we will use the date the paper appeared online and find the difference in "days" between the [publishedOnline]{.column_name} date and the [received]{.column_name} date.
+
+The table "[Papers table. Maximum and minimum values for date fields]{.figure_name}" from data validation part shows that the earliest  received date is `r str_replace_all(Dates_Range$received_min, "-", "/")`, and the print dates start from `r str_replace_all(Dates_Range$publishedPrint_min, "-", "/")`. 
+ Let's plot a histogram of the differences between
+[publishedOnline]{.column_name}  and 
+[received]{.column_name}  for articles and communications to see the distribution of the data.
+
+```{r dates_histogram, fig.height=2.5}
+
+# We use a julianday() function to find the difference between the two dates in "days"
+# and store it in a new variable 'waiting_time' to plot the histogram.
+
+Query16 <- 
+"
+SELECT type,
+       round(julianday(publishedOnline) - julianday(received)) AS waiting_time
+  FROM Papers
+ WHERE type IN ( 'Article', 'Communication' )
+   AND received IS NOT NULL
+   AND received < publishedOnline;
+"
+ 
+Title_plot <- "Distribution of number of days between received and published dates"
+
+ dbGetQuery(JACSpapersDB, Query16) %>%
+   ggplot(aes(waiting_time)) +
+   geom_histogram(binwidth = 20, fill = light_color, colour = dark_color, linewidth = 0.1) +
+   ggtitle(Title_plot) +
+   xlab("waiting time, days") +
+   facet_wrap( ~type) +
+   themes2 + theme(plot.title = element_text(hjust = 0.5),
+                   plot.margin = unit(c(10,50,10,10), "pt"),
+                   panel.spacing = unit(2, "lines"),
+                   strip.background =element_rect(fill="gray95"),
+                   strip.text = element_text(colour = 'gray35')) 
+```
+
+
+In some cases it took quite a long time before the paper was published. For articles from the 90s, this is because not everyone used the Internet at that time, and some articles were sent to journals by mail, then the journal editor sent copies of the manuscript to reviewers, and all communication between authors, editor, and reviewers could be done by mail.  
+We can find a paper that has been waiting the longest to be published.
+
+
+```{r}
+
+# Find the article that has the largest difference between the "received" date 
+# and the "ppublishedOnline" date, and present the results in "days" and "years".
+
+Query17 <-
+"
+SELECT date(received) AS received,
+       date(publishedOnline) AS publishedOnline,
+       date(publishedPrint) AS publishedPrint,
+       round(julianday(publishedOnline) - julianday(received)) AS waiting_time_days,
+       round((julianday(publishedOnline) - julianday(received)) / 365, 1) AS waiting_time_years,
+       title
+  FROM Papers
+ WHERE received IS NOT NULL
+   AND received < publishedOnline
+ ORDER BY waiting_time_days DESC
+ LIMIT 1;
+"
+
+Longest_Waiting_Time <- dbGetQuery(JACSpapersDB, Query17)
+
+query_to_gt_table(Longest_Waiting_Time, table_title = "", col_padding = 25) %>%
+    data_color( columns = waiting_time_years, 
+                rows = everything(),
+                palette = cell_highlight_blue) %>%
+    tab_spanner(label = "waiting time", columns = starts_with("waiting")) %>%
+    tab_spanner(label = "published", columns = starts_with("published")) %>%
+    cols_label(publishedOnline = "Online",
+               publishedPrint	= "Print",
+               waiting_time_days = "days",
+               waiting_time_years = "years" ) %>%
+    cols_align("center")
+```
+
+It was received in `r str_extract(Longest_Waiting_Time$received, "\\d{4}")` and published in 
+`r str_extract(Longest_Waiting_Time$publishedOnline, "\\d{4}")`, the peer review process took 
+`r Longest_Waiting_Time$waiting_time_years` years. 
+But this is not typical. To eliminate the influence of outliers on the calculations,
+we find the median publication time in JACS for different types of papers.
+Let's also look at how this time has changed from 1996 to 2016 for articles and communications.
+
+
+```{r dates_table2, fig.height=2.5}
+# There is no median function in SQLite (SQLite version 3.46.1), 
+# therefore to find median, here and below, we 
+#  -  order and group data with window function OVER();
+#  -  add row number (rank)  with row_number() function (stored in 'by_days');
+#  -  count the number of rows in each group with count(*) function (stored in 'paper_count')
+#  -  find one row where the rank is equal to the number of rows divided by 2 
+#     (round it with floor() function )
+
+Title = "Median number of days it takes  \n to publish a paper after it is received \n by the journal, JACS database overall"
+
+Query18 <-
+"
+WITH waiting_time
+  AS (SELECT type,
+             days,
+             row_number() OVER(PARTITION BY type ORDER BY days) AS by_days,
+             count(*) OVER(PARTITION BY type) AS paper_count
+        FROM (  SELECT type,
+                      round(julianday(publishedOnline) - julianday(received)) AS days
+                 FROM Papers
+                WHERE type IN ( 'Article', 'Communication', 'Perspective' )
+                  AND received IS NOT NULL
+                  AND received < publishedOnline))
+SELECT type,
+       days
+  FROM waiting_time
+ WHERE by_days LIKE floor(paper_count/2);
+"
+Waiting_Time <- dbGetQuery(JACSpapersDB, Query18)
+
+# In this query, we also group by year to determine the median time it takes
+# to publish a paper.
+Query19 <- 
+"
+WITH waiting_time
+  AS (SELECT year,
+             type,
+             days,
+             row_number() OVER(PARTITION BY type, year ORDER BY days) AS by_days,
+             count(*) OVER(PARTITION BY type, year) AS paper_count
+        FROM (  SELECT type,
+                       strftime('%Y', publishedOnline) AS year,
+                       round(julianday(publishedOnline) - julianday(received)) AS days
+                  FROM Papers
+                 WHERE type IN ('Article', 'Communication')
+                   AND received IS NOT NULL
+                   AND received < publishedOnline))
+SELECT year,
+       type,
+       days
+  FROM waiting_time
+ WHERE by_days LIKE floor(paper_count/2);
+"  
+
+Waiting_Time_year <- dbGetQuery(JACSpapersDB, Query19)
+
+Title_plot <- "The time between the date a paper is published 
+online and the date it is received by the journal"
+
+p1 <-  Waiting_Time_year %>%
+  ggplot(aes(year, days, colour = factor(type)))  +
+  geom_point() +
+  labs(title = Title_plot,
+       y = "waiting time, days") +
+  scale_color_manual(values = c(articles_color, communications_color)) +
+  themes2 +
+  theme(plot.margin = unit(c(0,20,0,10), "pt"),
+        plot.title = element_text(hjust = 0.5) , 
+        legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 7),
+        axis.text.x = element_text(angle = 90)) 
+
+ggarrange( query_to_table(Waiting_Time, table_title = Title, col_padding = 20, font_size = 9) , 
+           p1, align = "h")  
+```
+
+In 20 years, the time it takes to publish an article has decreased from 
+`r round(Waiting_Time_year$days[1]/30 ,1)` 
+to `r round(Waiting_Time_year$days[21]/30, 1)` month.
+And for communications it was `r round(Waiting_Time_year$days[22]/30, 1)`
+month in `r min(Waiting_Time_year$year)` and 
+`r round(Waiting_Time_year$days[42]/30, 1)`
+month in `r max(Waiting_Time_year$year)`.
+
+<hr style="border:0.8px solid whitesmoke">
+
+# Citations
+Now we find out how the publications of JACS are cited and how citations are related to other variables in this database. This metric is very important:  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#10023;</span>  &nbsp;&nbsp; the impact factor of a journal is calculated based on citations;  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#10023;</span>  &nbsp;&nbsp;for authors, this influences other metrics such as the h-index, i10 index;  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#10023;</span>  &nbsp;&nbsp;for a paper, it shows how important and relevant a particular study is.  
+
+<hr style="border:0.8px solid whitesmoke">
+
+## Views and citations  
+
+[What is the relationship between views and citations?]{.question}  
+
+Obviously, there should be a strong correlation between views and citations. The more people view an article, the more likely it is to be cited.
+<br>
+First, we look at the distribution of these variables.  To make the graphs less cluttered, we only use articles from the first issue of this dataset (issue 118).
+```{r citations_views_histogram, fig.width=6, fig.height=2 }
+
+# Select a subset of the Paper table to plot histograms of views and citations,
+# and a scatter plot of views versus citations.
+ 
+Query20 <- 
+"
+SELECT views,
+       citations
+  FROM Papers
+ WHERE type LIKE 'Article'
+   AND issue LIKE 118;
+"  
+  
+Articles_issue118 <-  dbGetQuery( JACSpapersDB, Query20 )
+
+Title_plot1 <- "Distribution of views"
+  
+p1 <- ggplot(data = Articles_issue118, aes(views)) +
+  geom_histogram(binwidth = 150,  fill = light_color, colour = dark_color, linewidth = 0.1) +
+  ggtitle(Title_plot1) +
+  themes2 + theme(plot.margin = unit(c(10,50,10,10), "pt")) 
+
+Title_plot2 <- "Distribution of citations"
+
+p2 <- ggplot(data = Articles_issue118, aes(citations)) +
+  geom_histogram(binwidth = 35,  fill = light_color, colour = dark_color, linewidth = 0.1) +
+  ggtitle(Title_plot2) +
+  themes2 + 
+  theme(plot.margin = unit(c(10,10,10,10), "pt")) 
+
+ggarrange(p1, p2, ncol = 2 , align = "hv")
+```
+
+The data is highly skewed and outliers will result in a high correlation coefficient. Let's apply some transformations to these variables, such as logarithmic transformation, to get a better visualization.
+
+```{r citations_views_scatter , fig.width=6, fig.height=2 }
+
+Title_plot <- "Citations vs Views"
+
+p1 <- ggplot(data = Articles_issue118, aes(views, citations)) + 
+  geom_point(colour = points_color, shape = 1) + 
+  themes2 + 
+  theme(plot.margin = unit(c(10,50,10,10), "pt")) 
+
+p2 <- ggplot(data =  Articles_issue118, aes(log(views), log(citations) )) +
+  geom_point(colour = points_color, shape = 1) + themes2 + 
+  theme(plot.margin = unit(c(10,10,10,10), "pt")) 
+
+ggarrange(p1, p2, ncol = 2 , align = "hv",  common.legend = TRUE) %>%
+  annotate_figure(top = text_grob(Title_plot, 
+               color = title_color, size = 9))
+
+```
+
+As we can see from the graph above (on a logarithmic scale), there is a correlation between the number of views and citations. We'll look at how citations and views change over time by calculating metrics that are appropriate for this type of data:  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#9900;</span> &nbsp;&nbsp; the median number of views and citations for each year or issue (we have one issue per year);  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#9900;</span> &nbsp;&nbsp; Spearman's rank correlation coefficient between views and citations;  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#9900;</span>  &nbsp;&nbsp; the ratio of the median number of views to the median number of citations, which shows how many times an article needs to be viewed to be cited once.
+
+```{r citations_views_table}
+# we define three CTEs: 
+#        (1) table views_median has median views, grouped by type and year
+#            (here we used 'issue' since we have one issue per year);
+#        (2) table citations_median has median citations, grouped by type and year (issue);
+#        (3) table Spearman has calculated Spearman's rank correlation coefficients,
+#            grouped by type and year (issue).
+# Then we join all the tables.
+
+Query21 <-
+"
+WITH views_median 
+  AS (SELECT year,
+             type,
+             views
+        FROM (  SELECT strftime('%Y', publishedPrint) AS year,
+                       views,
+                       type,
+                       row_number() OVER(PARTITION BY type, issue ORDER BY views) AS by_views,
+                       count(paperID) OVER(PARTITION BY type, issue) AS paper_count
+                  FROM Papers
+                 WHERE type IN ('Article', 'Communication'))
+       WHERE by_views LIKE floor(paper_count/2)) , 
+       citations_median
+  AS (SELECT year,
+             type,
+             citations
+        FROM (  SELECT strftime('%Y', publishedPrint) AS year,
+                       type,
+                       citations,
+                       row_number() OVER(PARTITION BY type, issue ORDER BY citations) AS by_citations,
+                       count(paperID) OVER(PARTITION BY type, issue) AS paper_count
+                  FROM Papers
+                 WHERE type IN ('Article', 'Communication'))
+       WHERE by_citations LIKE floor(paper_count/2)) ,
+       Spearman
+    AS (SELECT year,
+               type,
+               round(1 - ((6*sum(power(by_views - by_citations, 2)))/ (paper_count*(power(paper_count, 2) - 1))), 3) AS SCC
+          FROM (  SELECT strftime('%Y', publishedPrint) AS year,
+                         type,
+                         rank() OVER(PARTITION BY type, issue ORDER BY views) AS by_views,
+                         rank() OVER(PARTITION BY type, issue ORDER BY citations) AS by_citations,
+                         count(paperID) OVER(PARTITION BY type, issue) AS paper_count
+                    FROM Papers
+                   WHERE type IN ('Article', 'Communication'))
+         GROUP BY type, year)
+           
+SELECT views_median.year,
+       views_median.type,
+       views_median.views AS views,
+       citations_median.citations AS citations,
+       views_median.views / citations_median.citations AS ratio,
+       Spearman.SCC
+  FROM views_median
+  LEFT JOIN citations_median
+    ON views_median.year     = citations_median.year
+   AND views_median.type     = citations_median.type
+  LEFT JOIN Spearman
+    ON citations_median.year = Spearman.year
+   AND citations_median.type = Spearman.type;
+"  
+
+Views_Citations <- dbGetQuery(JACSpapersDB, Query21)
+```
+
+```{r citations_views_all, fig.height=5.5 }
+
+Title_plot1 <- "Spearman's correlation coefficient  \n between views and citations"
+
+p1 <- ggplot(data = Views_Citations, aes(year, SCC, color = factor(type))) +
+  geom_point() +
+  labs( title =  Title_plot1,
+        y = "correlation coefficient") +
+  scale_color_manual(values = c(articles_color, communications_color)) +
+  themes2 +
+  theme(axis.text.x = element_text(angle = 90),
+        plot.margin = unit(c(10,10,10,10), "pt"),
+        legend.title = element_blank(),
+        legend.position = "bottom",
+         legend.text = element_text(size = 7))
+
+Title_plot2 <- "Median number of citations and  views from 1996 to 2016"
+  
+p2 <- ggplot(data = Views_Citations, aes(year, views)) +
+  geom_point(aes(color = "view")) + 
+  geom_point(aes(year, citations*35, color = "citation")) +
+  labs( title =  Title_plot2,
+        y = "Median number of views") +
+  scale_y_continuous(sec.axis = sec_axis( ~./35, name="Median number of citations")) +
+  scale_color_manual(values = c( "citation" = citations_color, 
+                                 "view" = "#8d8d8e"),
+                     labels = c("citations", "views"))+
+  facet_wrap(~type) +
+  themes2 +
+  theme(plot.title = element_text(hjust = 0.5) ,
+        axis.title.y = element_text(color = "#5a5a5b"),
+        axis.text.y = element_text(color = "#5a5a5b"),
+        axis.text.x = element_text(angle = 90),
+        axis.title.y.right = element_text(color = "#6C2DC7"),
+        axis.text.y.right = element_text(color = "#6C2DC7"),
+        legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 7),
+        plot.margin = unit(c(10,10,10,10), "pt"),
+        panel.spacing = unit(2, "lines"),
+        strip.background =element_rect(fill="gray95"),
+        strip.text = element_text(colour = 'gray35'))
+
+Views_Citations_sub <- Views_Citations %>% 
+  filter(year %in% c(1996, 2007, 2008, 2016)) %>%
+  arrange(year)
+
+
+# The following table stores calculated indicators for 1996, 2007, 2008, 2016:
+# the first and last years in the database, and for 2007 and 2008 to highlight 
+# changes in citations that occurred in 2008.
+
+Title <- "Summary table. Changes in views and \n citations in 1996, 2007, 2008 and 2016"
+
+Summary_table <- query_to_table(Views_Citations_sub,
+                                table_title = Title,
+                                col_names = c("year", "type", "views", 
+                                              "citations", "ratio", "SCC*"),
+                                font_size = 9) %>%
+  tab_add_footnote("* Spearman's rank correlation coefficient",
+                   face = "italic", size = 8, color = title_color,
+                   padding = unit(1.5, "line"), just = "right")
+
+ ggarrange(p2, ggarrange(p1, Summary_table),  nrow =  2 , align = "v")
+```
+<br><br>
+The number of views has been steadily increasing throughout the period from 1996 to 2016, which is not surprising as publications become increasingly accessible via the Internet. 
+From 1996 to 2007, the correlation coefficient between views and citations gradually increased and was greater than 0.7, indicating a strong relationship between the two variables.  
+
+Citations also showed a slight upward trend during this time period.
+However, we see a very sharp drop in citations in 2008, which continued into 2009; even though citations recovered in 2010, they did not return to their previous levels and continued to decline.  
+
+On the one hand, the longer an article is online, the more likely it is to be viewed. 
+However, as we can see from the data, newer works have more views. But despite this, they are cited less.
+
+The table shows the calculated indicators for 1996, 2007, 2008, 2016. 
+The ratio of median views to median citations in 2008 increased compared to 2007 for articles from 
+`r Views_Citations_sub$ratio[which(Views_Citations_sub$type == "Article" & Views_Citations_sub$year == 2007)]` 
+to
+`r Views_Citations_sub$ratio[which(Views_Citations_sub$type == "Article" & Views_Citations_sub$year == 2008)]`,
+and for communications from 
+`r Views_Citations_sub$ratio[which(Views_Citations_sub$type == "Communication" & Views_Citations_sub$year == 2007)]` 
+to
+`r Views_Citations_sub$ratio[which(Views_Citations_sub$type == "Communication" & Views_Citations_sub$year == 2008)]`!  
+
+In `r max(Views_Citations_sub$year)` one citation requires about 
+`r Views_Citations_sub$ratio[which.max(Views_Citations_sub$year)]` 
+views for an article, while in `r min(Views_Citations_sub$year)` the median was 
+`r Views_Citations_sub$ratio[which.min(Views_Citations_sub$year)]` 
+views per citation.
+
+<hr style="border:0.8px solid whitesmoke">
+
+[What was the most cited paper in JACS from 1996 to 2016?]{.question}
+
+
+```{r most_cited, out.height= 2}
+# We join all three tables (Paper_Authors, Papers and Authors);
+# concatenate three fields with first name, initial and last name from Authors table; 
+# then all authors names combined in one string using group_concat() function 
+# to avoid duplicating the title for each author.
+Query22 <-
+"
+SELECT year,
+       type,
+       group_concat(name, ', ') AS authors,
+       citations,
+       views,
+       title
+  FROM (  SELECT strftime('%Y', Papers.publishedPrint) AS year,
+                 Papers.type AS type,
+                 Papers.title AS title,
+                 Papers.citations AS citations,
+                 Papers.views AS views,
+                 Authors.forename || ' ' || Authors.initials || ' ' || Authors.surname AS name
+            FROM Papers
+            LEFT JOIN Paper_Authors
+              ON Papers.paperID         = Paper_Authors.paperID
+            LEFT JOIN Authors
+              ON Paper_Authors.authorID = Authors.authorID
+           WHERE citations = (SELECT max(citations) FROM Papers));
+"
+
+Most_Cited <- dbGetQuery( JACSpapersDB, Query22)
+
+query_to_gt_table(Most_Cited, table_title = "") %>%
+  data_color( columns = citations, 
+              rows = everything(),
+              palette = cell_highlight_blue) %>%
+  cols_align("center")
+```
+
+The most cited paper in JACS from 1996 to 2016 is `r tolower(Most_Cited$type)`, 
+that was published in `r Most_Cited$year`
+and had `r str_replace(Most_Cited$citations, "(\\d+)(\\d{3}$)", "\\1,\\2")`  citations. 
+
+The median number of citations for that year was 
+`r Views_Citations$citations[which(Views_Citations$year == Most_Cited$year & Views_Citations$type == Most_Cited$type)] `
+. And if we divide the number of views by the number of citations, we see that every 
+`r str_remove(paste(round(Most_Cited$views/Most_Cited$citations), "th"), " ") ` 
+person who read that article cited it.
+
+<hr style="border:0.8px solid whitesmoke">
+
+
+[Lots of views and few citations]{.question}
+
+Let's find the article with the highest views to citations ratio.
+
+```{r highest_ratio}
+
+# We filter rows in sub query to keep citations > 0 and views > 0 to avoid dividing
+# by 0 or dividing 0 by a number.
+Query23 <- 
+"
+SELECT paperID,
+       title,
+       views,
+       citations,
+       views / citations AS ratio
+  FROM Papers
+ WHERE ratio like (   SELECT max(views / citations) AS ratio
+                        FROM Papers
+                       WHERE citations > 0
+                         AND views     > 0
+                         AND citations IS NOT NULL
+                         AND views IS NOT NULL);
+"
+
+Low_Citations <- dbGetQuery( JACSpapersDB, Query23)
+
+query_to_gt_table(Low_Citations, table_title = "", col_padding = 15) %>%
+  cols_align("center")
+```
+
+Perhaps *`r str_remove_all(Low_Citations$title, "\\(|\\)|\\-|\\−|A")`*  is a very specific study and not many research groups are working in this direction.
+
+<hr style="border:0.8px solid whitesmoke">
+
+## Publication type
+
+[Which types of papers are cited more often: *articles*, *communications*, or *perspectives*?]{.question}
+
+We find median citations for these three types of JACS papers.
+
+```{r type_citations, fig.height=2.5}
+
+# The median citations of articles, communications and perspectives for the table.
+
+Title <- "Median number of citations for \n  different types of publications"
+
+Query24 <- 
+"
+SELECT type,
+       citations 
+  FROM (  SELECT citations,
+                 type,
+                 row_number() OVER (PARTITION BY type ORDER BY citations) AS by_citations,
+                 count(paperID) OVER (PARTITION BY type) AS paper_count
+            FROM Papers
+           WHERE type IN ( 'Article', 'Communication', 'Perspective' )
+             AND title NOT LIKE 'New Editor Information') 
+ WHERE by_citations LIKE floor(paper_count/2);
+"
+
+Type_Median_Citations <-  query_to_table(query = Query24, 
+                                         table_title = Title,
+                                         col_padding = 15 )
+
+# Citation data for articles, communications and perspectives for the boxplot.
+Query25 <-
+"
+SELECT citations,
+       type
+  FROM Papers
+ WHERE type IN ( 'Article', 'Communication', 'Perspective' )
+   AND title NOT LIKE 'New Editor Information';
+"
+
+Type_Citations <- dbGetQuery( JACSpapersDB, Query25 )
+
+Title_plot <- "Boxplot of citations \n for different types of publications"
+
+p1 <- Type_Citations %>%
+  ggplot(aes(x = factor(type), y = log(citations), fill = factor(type))) +
+  geom_boxplot( linewidth = 0.2) +
+  scale_fill_manual(values = c(articles_color, communications_color, "gray75")) +
+  ggtitle(Title_plot) +
+  themes2 +
+  theme(axis.title.x = element_blank(),
+        plot.margin = unit(c(10, 30, 10, 30), "pt"),
+        legend.position="none")
+
+ggarrange(Type_Median_Citations, p1, align = "v", widths = c(1, 1.3)) 
+```
+
+
+The median citation of *perspectives* is higher, but there are far fewer *perspectives* than *articles* and *communications*, so let's focus on just these two types and test hypothesis that *articles* are cited less than *communications*.
+
+```{r}
+Type_Citations <- Type_Citations %>% 
+  filter(type %in% c('Article', 'Communication')) 
+
+# We use Wilcoxon test because the data has the skewed distribution.
+
+paste("The p-value for Wilcoxon test is ",
+      wilcox.test(citations ~ type, data = Type_Citations, alternative = "less")$p.value)
+```
+
+The low p-value suggests that the alternative hypothesis that *articles* are cited less often than *communications* is true, however if we look at the medians and box plots, this difference is not significant.
+
+<hr style="border:0.8px solid whitesmoke">
+
+## Number of publications
+
+[Will a paper be cited more often if its authors have more publications?]{.question}
+
+We first look at the distribution of the number of publications per author.
+
+```{r paper_count_author, fig.height= 2.5}
+
+# Data for a histogram: the number of papers each author published in JACS (1996 - 2016)
+
+Query26 <- 
+"
+SELECT count(*) AS paper_count
+  FROM Paper_Authors
+ GROUP BY authorID;
+"
+
+Papers_per_Author <- dbGetQuery(JACSpapersDB, Query26) 
+
+# This query finds the names of the top authors and the number of papers in JACS (1996–2016),
+# as well as the title and citations for their most cited work.
+
+# CTE, paper_count_per_author: we find the number of publications each author has ('paper_count') 
+#      and select authors with more than 90 papers in the JACS database.
+# In the SELECT, we find the publication that has the most citations for each author listed in
+# the paper_count_per_author table and add the author name from the Authors table.
+
+Query27 <- 
+"
+WITH paper_count_per_author 
+  AS (SELECT authorID,
+             paperID,
+             paper_count
+        FROM (  SELECT *,
+                       count(paperID) OVER (PARTITION BY authorID) AS paper_count
+                  FROM Paper_Authors)
+                 WHERE paper_count > 90 ) 
+
+SELECT Authors.forename || ' ' || Authors.initials || ' ' || Authors.surname AS author,
+       top_authors.paper_count,
+       top_authors.citations,
+       top_authors.title
+  FROM Authors
+ RIGHT JOIN (  SELECT *
+                 FROM (  SELECT Papers.paperID,
+                                Papers.citations,
+                                max(Papers.citations) OVER(PARTITION BY paper_count_per_author.authorID) AS citation_max,
+                                Papers.title,
+                                paper_count_per_author.authorID,
+                                paper_count_per_author.paper_count
+                           FROM Papers
+                          RIGHT JOIN paper_count_per_author 
+                             ON Papers.paperID = paper_count_per_author.paperID)
+                WHERE citations LIKE citation_max) AS top_authors 
+    ON Authors.authorID = top_authors.authorID
+ WHERE author NOT LIKE ' ACS Contributing Correspondents'
+ ORDER BY citations DESC;
+"
+
+Top_Authors <- dbGetQuery(JACSpapersDB, Query27) 
+
+Title <- "Histogram of number of publications per author"
+
+set.seed(1)
+Papers_per_Author %>%
+  ggplot(aes( paper_count)) +
+  geom_histogram(binwidth = 1,   fill = light_color, colour = dark_color, linewidth = 0.1) +
+  geom_text_repel(data = Top_Authors, aes(label = author,  y=40000, x = paper_count),
+                  size = 2, color = dark_color,
+                   max.overlaps = Inf,
+                  min.segment.length = Inf, seed = 1,
+                  force_pull   = 0,
+                  vjust   = sample(c(-1,0, 1), nrow(Top_Authors), replace = TRUE),
+                  box.padding = 0.2
+                  ) +
+  labs(title = Title, 
+       x ="number of papers",
+       y = "count") +
+  themes2 +
+  theme(plot.margin = unit(c(10,5,5,10), "pt"))
+```
+ 
+ This graph also shows the top authors (the further to the right, the more papers the author has published). We see the names of very famous chemists who have made significant contributions to chemical science, including Nobel Prize winners such as Fraser Stoddart and Robert Grubbs.  
+Here are some of their most cited papers.
+
+```{r}
+query_to_gt_table(Top_Authors[ , -2], "Top authors in JACS, 1996 - 2016", n = 5)
+```
+
+The citation rate of these articles is significantly higher than the average citation rate, which is not surprising, since the authors who published so many works are well known.  
+
+The distribution of the number of papers by authors is highly uneven:
+`r round(mean(Papers_per_Author$paper_count == 1)*100, 1)`% of authors have only one paper in JACS. So for each publication we will find an author with the most publications among all authors in the same paper and plot the citation count in the logarithmic scale against the number of the publications in **JACS database** for that author.
+
+The number of citations varies by the year. Therefore, we compare the 1st and last issues:  `r unlist(range(Papers$issue))`, and use communications and articles.  The graphs  below shows  citations against the number of publications  that the author has in JACS and the loss curve with a confidence interval, which shows a trend.
+
+```{r paper_count_citations, fig.height=3 }
+
+# we define two CTEs: 
+#        (1) table 'articles_communications' has citations for articles and communications
+#            in issues 118, 138; in this table we have a subset of paper IDs
+#        (2) table 'paper_count_per_author', we select both fields from Paper_Authors table and
+#            use left join to add counts of papers per author, calculated from the same table Paper_Authors;
+#            in this table we have all paper IDs and all author IDs (paper IDs are duplicated).
+# Then we join two tables and keep only rows where citations are not 0 to plot in log scale.
+
+Query28 <-
+"
+WITH articles_communications
+  AS (SELECT paperID,
+             issue,
+             citations
+        FROM Papers
+       WHERE type IN ('Article', 'Communication')
+         AND issue IN (118, 138)),
+     paper_count_per_author
+  AS (SELECT Paper_Authors.paperID,
+             Paper_Authors.authorID,
+             papers_per_author.paper_count
+        FROM Paper_Authors
+        LEFT JOIN (  SELECT count(paperID) AS paper_count,
+                            authorID
+                       FROM Paper_Authors
+                      GROUP BY authorID) AS papers_per_author 
+          ON Paper_Authors.authorID = papers_per_author.authorID)
+            
+SELECT articles_communications.citations,
+       articles_communications.issue,
+       Max_Papers.paper_count_max
+  FROM articles_communications
+  LEFT JOIN (  SELECT paperID,
+                      max(paper_count) AS paper_count_max
+                 FROM paper_count_per_author
+                GROUP BY paperID) AS Max_Papers 
+    ON articles_communications.paperID = Max_Papers.paperID
+ WHERE citations NOT LIKE 0;
+"
+
+Title_plot <- "Number of citations for Communications vs the number  
+          of papers by the author in the JACS database"
+
+dbGetQuery(JACSpapersDB, Query28) %>%
+  ggplot( aes(log(paper_count_max), log(citations))) +  
+  geom_point(colour = points_color, shape = 1) +
+  facet_wrap(~issue, 
+             labeller = as_labeller(c(`118` = "issue 118, 1996", `138` = "issue 138, 2016"))) +
+  geom_smooth(method = "loess", span = 0.9,
+              se = TRUE, level = 0.95,
+              color = light_color, fill = "magenta", linewidth = 0.5) +
+  ggtitle(Title_plot) +
+  xlab("log(number of the papers per author)") +
+  themes2 +
+  theme(plot.margin = unit(c(10,20,10,20), "pt"),
+        panel.spacing = unit(2, "lines"),
+        plot.title = element_text(hjust = 0.5),
+        strip.background =element_rect(fill="gray95"),
+        strip.text = element_text(colour = 'gray35'))
+```
+
+
+For issue 118, in 1996, we can see a small positive relationship between the number of citations and the number of publications an author had in JACS, but we don't see the same in 2016. 
+
+One of the possible explanations is  self-citation. Authors cite their own previous research because they often continue to work on the same topic for many years. A paper from a recent issue is less likely to be cited by the same authors.
+
+Let's check how much time has passed between two publications by the same author. We filter out authors who have only one paper in the JACS database and display the results as a histogram.
+
+```{r time_between_publications, fig.height=2.5}
+
+# CTE, 'paper_received_date': we count papers per author in Paper_Authors table
+#       and only keep author IDs that have more than one paper in JACS database, and
+#       add 'paperID' and 'received' date from Papers table
+
+# In SELECT we find the duration between two publications for each author 
+# as the difference between the first and the last received dates, 
+# divided by the number of papers published by this author;
+# then we divide the difference by 365 to convert it to years. 
+
+Query29 <-                                   
+"
+WITH paper_received_date
+  AS (SELECT more_than_one_raper.authorID,
+             more_than_one_raper.paperID,
+             received_date.received
+        FROM (  SELECT authorID,
+                       paperID
+                  FROM Paper_Authors
+                 WHERE authorID IN (  SELECT authorID
+                                        FROM Paper_Authors
+                                       GROUP BY authorID
+                                      HAVING count(paperID) > 1 )) AS more_than_one_raper
+       INNER JOIN (  SELECT paperID,
+                            received
+                       FROM Papers
+                      WHERE received IS NOT NULL) AS received_date
+          ON more_than_one_raper.paperID = received_date.paperID)
+          
+SELECT ((julianday(max(received)) - julianday(min(received))) / count(*)) / 365 AS years_dif
+  FROM paper_received_date
+ GROUP BY authorID;
+"
+
+Title_plot <- "Distribution, the time between two JACS publications by the same author, years"
+
+dbGetQuery(JACSpapersDB, Query29) %>%
+  ggplot(aes(years_dif)) +
+  geom_histogram(binwidth = 0.2,  fill = light_color, colour = dark_color, linewidth = 0.1) +
+  geom_vline( aes(xintercept = median(years_dif)), colour = dark_color) +
+  geom_text(aes(label = paste(round(median(years_dif), 2), "years"), x = median(years_dif), y = 4000),
+            colour=dark_color, size = 2, vjust = -1, hjust = -0.5) +
+  ggtitle(Title_plot) +
+  xlab("years") +
+  themes2 
+```
+
+ Of course, this graph only shows JACS articles, we don't take into account other journals, and therefore the time between two publications is shorter.
+
+<hr style="border:0.8px solid whitesmoke">
+
+## Title and abstract
+
+[What were the popular topics in chemical science from 1996 to 2016?]{.question}  
+
+We can find keywords that are more common in highly cited papers than in less cited papers using text analysis of titles and abstracts of articles and communications published in 1996, 2003, 2009 and 2015.
+
+```{r  wordcloud, fig.height=3.5}
+
+# For the text analysis we use tidytext package and add more words to the 'stop_words'
+# to be ignored, including "na"; all missing abstracts are converted to "na"s by unnest_tokens()
+
+data(stop_words)
+
+stop_words <- stop_words %>% select(word) %>%
+  bind_rows(data.frame(word = c("analysis","based", "behavior", "chemical","chemistry",
+                                "compounds", "experiment", "experiments", "form",
+                                "highly" , "na","properties", "property", "related",
+                                "structures", "structure", "study")))
+
+
+# titles and abstracts published in 1996, 2003, 2009, and 2015
+Query30 <- 
+"
+SELECT CAST(strftime('%Y', date(publishedPrint, 'start of year')) AS NUMERIC) AS year,
+       title,
+       abstract,
+       views,
+       citations,
+       type
+  FROM Papers
+ WHERE type IN ( 'Article', 'Communication' )
+   AND year IN ( '1996', '2003', '2009', '2015' );
+" 
+
+Title_Abstract <- dbGetQuery(JACSpapersDB, Query30)
+
+# For loop: 'more_citations' and 'less_citations' contain counts of words from the titles and 
+# abstracts of papers that have more and less than the median number of citations,  respectively.
+# We then keep only those words that appear in "more_citations" and not in "less_citations".
+
+words  <- data.frame()
+for (i in c(1996, 2003, 2009, 2015)) {
+  more_citations <- Title_Abstract %>% 
+    filter(year == i & 
+             citations > mean( Views_Citations$citations[which(Views_Citations$year == i )])) %>% 
+    mutate(words = paste(title, abstract)) %>%
+    unnest_tokens(input = words, output = word)  %>%
+    anti_join(stop_words)  %>%
+    group_by(word) %>%
+    summarise(n = n()) %>%
+    filter(n >50, !str_detect(word, "\\d"), nchar(word)>3)
+  
+  less_citations <- Title_Abstract %>% 
+    filter(year == i & 
+             citations <= mean( Views_Citations$citations[which(Views_Citations$year == i )])) %>% 
+    mutate(words = paste(title, abstract)) %>%
+    unnest_tokens(input = words, output = word)  %>%
+    anti_join(stop_words)  %>%
+    group_by(word) %>%
+    summarise(n = n()) %>%
+    filter(n >50, !str_detect(word, "\\d"), nchar(word)>3)
+  
+  words_i <- anti_join(more_citations, less_citations, by = "word") %>% 
+    arrange(desc(n)) %>%
+    slice_head(n = 20) %>%
+    mutate(year = i )
+  words <- rbind(words, words_i)
+}
+
+set.seed(3)
+angles <- sample(c(0, 90), size = nrow(words), prob = c(0.7, 0.3), replace = TRUE)
+
+words <- words %>%
+  group_by(year) %>% 
+  mutate(n = rank(n/max(n))) %>%
+  ungroup()
+
+Title_plot <- "Words that occur more frequently in the titles and abstracts 
+          of papers with more citations than the median"
+
+ggplot( data =  words, aes(label = word, size = n, colour = n)) +
+ geom_text_wordcloud(area_corr = TRUE,
+                      seed = 2,
+                      shape = "square", 
+                      angle = angles,
+                      eccentricity = 1.5) +
+  scale_size_area(max_size = 15, trans = power_trans(0.8)) +
+  scale_color_gradient(low =  "steelblue", high = "turquoise") +
+  ggtitle(Title_plot) +
+  facet_wrap(~year, ncol = 4)  +
+  theme_minimal( base_size = 10) + 
+  theme(plot.title = element_text( size = rel(1.1), 
+                                   family = title_family ,
+                                   hjust = 0.5,
+                                   color = title_color))
+```
+
+In the late 90s, chemistry was driven by catalysts and porphyrins were very popular, then in the mid-2000s, nanotechnology took the lead, in the mid-2010s we see perovskite materials for solar cells.
+
+<hr style="border:0.8px solid whitesmoke">
+
+## Open access
+[Is a paper more likely to be cited if it is published in the open access?]{.question} 
+
+If a publication is an editor's choice ([editorChoiceOA]{.column_name} has a value of 1) or an author's choice ([authorChoiceOA]{.column_name} has a value of 1), then it is an open access paper, freely available online, which can potentially lead to increased views.
+
+But does this mean that this article will have more citations? First, we need to estimate how many open access articles are in the **JACS database**, here we will use only articles and communications.  Given that citations vary greatly from year to year, we will also stratify the data by year.
+
+```{r open_access_counts, fig.height=3}
+
+# For articles and communications, we create a barplot showing the number of papers 
+# in open access by year, and add the percentage of papers in open access.
+
+# In the subquery we add a new variable 'is_open_access' (logical, 1 indicates 
+# open access to the article: ether authorChoiceOA = 1 or editorChoiceOA); 
+# then in main query we find the number and percentage of
+# open access papers for each year and type.
+
+Query31 <- 
+"
+SELECT year,
+       issue,
+       type,
+       round(avg(is_open_access LIKE 1)*100, 1) AS open_access_percent,
+       sum(is_open_access LIKE 1) AS open_access_count
+  FROM (  SELECT strftime('%Y', publishedPrint) AS year,
+                 issue,
+                 type,
+                 CASE
+                      WHEN authorChoiceOA LIKE 1
+                        OR editorChoiceOA LIKE 1 THEN 1
+                      ELSE 0
+                  END AS is_open_access,
+                  citations
+             FROM Papers
+            WHERE type IN ('Article', 'Communication')
+              AND title NOT LIKE 'New Editor Information')
+ GROUP BY issue,
+          type
+ ORDER BY issue
+"
+
+Open_Access_counts <- dbGetQuery(JACSpapersDB, Query31)
+
+Title_plot <- "Number of open access articles and communications by year"
+             
+ggplot(data = Open_Access_counts, aes(y=open_access_count, x = year, fill = factor(type))) +
+  geom_col( linewidth = 0.3, position = "dodge") +   
+  geom_text(aes(label = paste(open_access_percent , "%")), 
+            vjust = rep(c(-0.5, 1.5), 21), size = 2.5, hjust = -0.5,
+            angle = 90, color = rep(c( "darkorange", "steelblue"), 21)) +
+  scale_fill_manual(values = c( articles_color, communications_color)) +
+  ggtitle(Title_plot) +
+  ylab("count") +
+  ylim(c(0, 510)) +
+  themes2 + 
+  theme(axis.text.x = element_text(angle = 90),
+        legend.title = element_blank(),
+        legend.position = "bottom")
+```
+
+Before `r Open_Access_counts$year[which(Open_Access_counts$open_access_percent >1)][1] `
+, JACS had less than 1% of open access publications. And the maximum of `r max(Open_Access_counts$open_access_percent)`% was in `r Open_Access_counts$year[which.max(Open_Access_counts$open_access_percent)]`.
+We will filter out those issues with less than 1% open access papers per issue and compare the median number of citations for both groups.
+
+```{r open_access_citations}
+# In this query we find the median values in a slightly different way than above.
+# CTE, citation_view_ranked: 
+#        in sub query we add new variables 'is_open_access' (1 indicating open access paper 
+#        and 0 is not) and 'year';
+#        then in the main query we add ranks for views ('by_views') and citations ('by_citations'), 
+#            as well as paper counts ('paper_count') using window function OVER()
+#            and grouping by 'year', 'type' and  'is_open_access' variables.
+#
+# Then in SELECT:
+#       in sub query we add new variables: 
+#             'is_median_citation_OA', 'is_median_citation_notOA', 'is_median_views_OA' 
+#             and 'is_median_views_notOA'; 
+#             these fields have value of 0 or the number of views or  citations if the rank is 
+#             equal to the paper counts in the corresponding groups divided by 2; 
+#       in the main query we  group by year and type, and find sums for:  
+#             'is_median_citation_OA', 'is_median_citation_notOA', 'is_median_views_OA' and
+#             'is_median_views_notOA', this collapses rows with zeros.
+
+Title <- "Comparison of median citations and views by \n open access status from 2008 to 2016"
+
+Query32 <- 
+"
+WITH citation_view_ranked 
+  AS ( SELECT issue,
+              year,
+              type,
+              citations,
+              views,			         
+              is_open_access,
+              row_number() OVER(PARTITION BY year, type, is_open_access ORDER BY citations) AS by_citations,
+              row_number() OVER(PARTITION BY year, type, is_open_access ORDER BY views) AS by_views,
+              count(*) OVER(PARTITION BY year, type, is_open_access) AS paper_count 
+         FROM (  SELECT issue,
+                        strftime('%Y', publishedPrint ) AS year,
+                        type,	
+                        citations,
+                        views,
+                        CASE 
+                             WHEN authorChoiceOA LIKE 1 
+                             THEN 1
+                             WHEN editorChoiceOA LIKE 1
+                             THEN 1
+                             ELSE 0 END AS is_open_access
+                   FROM Papers
+                  WHERE type IN ('Article', 'Communication') 
+                    AND issue >= 130))
+					 
+SELECT issue,
+       year,
+       type,
+       sum(is_median_views_OA) AS view_OA,
+       sum(is_median_views_notOA) AS view_notOA,
+       sum(is_median_citation_OA) AS citation_OA,
+       CASE
+            WHEN sum(is_median_citation_OA) > sum(is_median_citation_notOA) THEN '>'
+            WHEN sum(is_median_citation_OA) < sum(is_median_citation_notOA) THEN '<'
+            ELSE '=' END AS more_less,
+       sum(is_median_citation_notOA) AS citation_notOA
+  FROM (  SELECT issue,
+                 year,
+                 type,
+                 citations,
+                 views,
+                 CASE
+                      WHEN by_citations LIKE floor(paper_count / 2)
+                       AND is_open_access = 1 THEN citations
+                      ELSE 0 END AS is_median_citation_OA,
+                 CASE 
+                      WHEN by_citations LIKE floor(paper_count / 2)
+                       AND is_open_access = 0 THEN citations
+                      ELSE 0 END AS is_median_citation_notOA,
+                 CASE
+                      WHEN by_views LIKE floor(paper_count / 2)
+                       AND is_open_access = 1 THEN views
+                      ELSE 0 END AS is_median_views_OA,
+                 CASE
+                      WHEN by_views LIKE floor(paper_count / 2)
+                       AND is_open_access = 0 THEN views
+                      ELSE 0 END AS is_median_views_notOA
+            FROM citation_view_ranked
+           WHERE is_median_citation_OA    != 0
+              OR is_median_citation_notOA != 0
+              OR is_median_views_OA       != 0
+              OR is_median_views_notOA    != 0)
+GROUP BY year,
+         type
+"
+
+Open_Access_citations <- dbGetQuery(JACSpapersDB, Query32)
+
+query_to_gt_table(Open_Access_citations, table_title = Title, col_padding = 20) %>%
+    cols_align( align = "center", columns = c(citation_OA, citation_notOA)) %>%
+    data_color( columns = more_less,
+                rows = everything(),
+                palette = c("#DC381F", "#505050", "#6AA121"), 
+                apply_to =  "text")%>%
+    tab_style( style = cell_text(color = "#6AA121" ),   
+               locations = cells_body(columns = citation_OA )   ) %>%
+    tab_style( style = cell_text(color =  "#DC381F"),
+               locations = cells_body(columns = citation_notOA  )   ) %>%
+    tab_style( style = cell_text(weight = "bold"),
+               locations = cells_body(columns = more_less  )   ) %>%
+    tab_spanner(label = "views", columns = starts_with("view")) %>%
+    tab_spanner(label = "citations", columns = 6:8) %>%
+    cols_label(view_OA = " open access ",
+               view_notOA = "not open access ",
+               citation_OA = "open access ",
+               more_less = " ", 
+               citation_notOA = "not open access ") %>%
+    cols_align("center")
+```
+
+Almost all open access articles and communications have lower median citations than non-public domain papers! We now add p-values to make sure that our results are statistically significant (test for non-public domain articles have more citations), and then summarize the results only for p-values less than 0.1 and make a boxplot for issue 136 (year 2014), which has the most papers in the open access.
+
+```{r open_access_plot, fig.height= 2.5}
+
+# We filter 'Papers' table for articles and communications in issues 130 and later, 
+# and add a new variable  'is_open_access': 1 indicating open access paper and 0 is not.
+Query33 <-
+"
+SELECT paperID,
+       citations,
+       issue,
+       type,
+       CASE
+            WHEN editorChoiceOA LIKE 1 THEN 1
+            WHEN authorChoiceOA LIKE 1 THEN 1
+            ELSE 0 END AS is_open_access
+  FROM Papers
+ WHERE type IN ( 'Article', 'Communication' )
+   AND issue >= 130
+"
+
+Open_Access <- dbGetQuery(JACSpapersDB, Query33)
+
+# The data is skewed, so we run a non parametric test, wilcox.test(), to find the p-value
+Open_Access_p_values <-
+Open_Access %>% 
+  group_by(issue, type) %>% 
+  summarise(p_value = wilcox.test(citations ~ is_open_access, alternative = "greater")$p.value ) %>%
+  ungroup() %>%
+  left_join(Open_Access_counts, by = c("issue", "type")) %>%
+  left_join(Open_Access_citations , by = c("issue", "type", "year")) %>%
+  filter(p_value < 0.1) 
+
+Title_plot <- "Boxplot of citations, 2014"
+
+p1 =  Open_Access %>% 
+  filter(issue == Open_Access_p_values$issue[which.max(Open_Access_p_values$open_access_count)]) %>%
+  ggplot(aes(y = log(citations), x = factor(type ), fill = factor(is_open_access))) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("#DC381F", "#85BB65"), labels = c("not open access", "open access")) +
+  ggtitle(Title_plot) +
+  themes2 + 
+  theme(axis.title.x = element_blank(),
+        legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.direction = "vertical",
+        plot.margin = unit(c(10,5,5,10), "pt"))
+
+Title <- "Summary table. Median citation by open access status"
+
+Open_Access_p_values <- Open_Access_p_values %>%
+  select(year, type, citation_OA, citation_notOA, p_value, open_access_count ) %>%
+  query_to_table( table_title =  Title,
+                  col_names =c("year", "type", "open access \n  citations", 
+                               "not open access \n  citations", "p-value", "counts \n open access"))
+
+
+ggarrange(Open_Access_p_values, p1, ncol = 2, widths = c(3,1))
+```
+
+It appears that open access papers have slightly lower citation rates than non-open access papers. 
+Also, note that we have the least p-value for issue with the largest number of publications with open access.
+
+<hr style="border:0.8px solid whitesmoke">
+
+[Find open access paper on perovskite materials published in 2015 in JACS and get the DOI URL of the one with the most citations.]{.question}  
+
+
+
+```{r open_access_perovskite1}
+
+# Find "perovskite" in the title of the open access papers, published in 2015
+Query34 <- 
+"
+SELECT paperID,
+       title,
+       substr(abstract, 1, 100) AS abstract
+  FROM Papers
+ WHERE authorChoiceOA LIKE 1
+   AND title LIKE '%perovskite%'
+   AND issue LIKE 137
+UNION
+SELECT paperID,
+       title,
+       substr(abstract, 1, 100) AS abstract
+  FROM Papers
+ WHERE editorChoiceOA LIKE 1
+   AND title LIKE '%perovskite%'
+   AND issue LIKE 137
+"
+
+query_to_gt_table(Query34, "")
+```
+
+There are 4 articles matching our search, and the following one has the most citations:
+
+```{r open_access_perovskite2 }
+
+# Find the DOI for the most cited "perovskite" open access paper. 
+Query35 <- 
+"
+SELECT DOI,
+       title,
+       citations,
+       DATE(publishedPrint) AS publishedPrint
+  FROM Papers
+ WHERE authorChoiceOA LIKE 1
+   AND title LIKE '%perovskite%'
+   AND issue LIKE 137
+    OR editorChoiceOA LIKE 1
+   AND abstract LIKE '%perovskite%'
+   AND issue LIKE 137
+ ORDER BY citations DESC
+ LIMIT 1
+"
+
+doi = dbGetQuery(JACSpapersDB, Query35)
+
+query_to_gt_table(doi, "", col_padding = 25) %>%
+  data_color( columns = DOI, 
+              rows = everything(),
+              palette = cell_highlight_blue) %>%
+  cols_align("center")
+```
+
+We can use the DOI to access it at the this link:
+
+`r str_remove(paste("https://pubs.acs.org/doi/", doi$DOI), " ")`
+
+```{r disconnect}
+dbDisconnect(JACSpapersDB)
+```
+
+<hr style="border:0.8px solid whitesmoke">
+
+# Conclusion
+
+ **JACS Papers 1996 - 2016** database has information about
+`r str_replace(sum(Types$type_count), "(\\d+)(\\d{3}$)", "\\1,\\2")` 
+papers,
+`r Types$type_percent[which(Types$type == "Article")]`%
+of which are articles and 
+`r Types$type_percent[which(Types$type == "Communication")]`%
+are communications.
+
+Other publication types in JACS: 
+*`r as.character(Types$type[-which(Types$type %in% c("Article", "Communication"))])`*.
+
+Articles are on average
+`r Pages$paper_length[which(Pages$type == "Article")]` 
+pages long, while communications are shorter publications, averaging
+`r Pages$paper_length[which(Pages$type == "Communication")]` 
+pages in length.
+
+The time it takes to publish a paper has decreased over the period covered by 
+the **JACS database**, and in 2016 was 
+`r round(Waiting_Time_year$days[21]/30, 1)` 
+ months for articles and 
+ `r round(Waiting_Time_year$days[42]/30, 1)`
+ months for communications.
+
+
+In this exploratory data analysis, we focused on citations of articles and communications and found the following trends:  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#8226;</span>  &nbsp;&nbsp; Communication have slightly higher citation rates than articles.  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#8226;</span>  &nbsp;&nbsp; The number of citations of JACS papers has been decreasing over time, although the number of views has been steadily increasing, resulting in the views to citations ratio rising from 
+`r Views_Citations_sub$ratio[which.min(Views_Citations_sub$year)]` in 
+`r min(Views_Citations_sub$year)`  to
+`r Views_Citations_sub$ratio[which.max(Views_Citations_sub$year)]`  in 
+`r max(Views_Citations_sub$year)`.  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#8226;</span>  &nbsp;&nbsp; In 2008 and 2009, there was an abnormal drop in citations. There may be several reasons for this phenomenon, but external data must be used to explain it.  
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#8226;</span>  &nbsp;&nbsp;  Publishing an article in open access does not lead to an increase in citations.
+
+Interesting facts: 
+
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#10023;</span>  &nbsp;&nbsp; The longest period of time between the date an article is received by a journal and the date of its publication is `r Longest_Waiting_Time$waiting_time_years` years.  
+
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#10023;</span>  &nbsp;&nbsp; The most cited paper in this database is 
+"*`r Most_Cited$title`*"
+, with 
+`r str_replace(Most_Cited$citations, "(\\d+)(\\d{3}$)", "\\1,\\2")` 
+citations.
+
+&nbsp;&nbsp;&nbsp;&nbsp;  <span>&#10023;</span>  &nbsp;&nbsp; The most number of papers,
+`r max(Top_Authors$paper_count)`
+, was published by 
+*`r Top_Authors$author[which.max(Top_Authors$paper_count)]`*.
+
+
+

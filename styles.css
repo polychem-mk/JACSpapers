@@ -1,0 +1,55 @@
+body {
+  font-family: Helvetica;
+  font-size: 12pt;
+}
+
+h1 {
+  ont-family: Helvetica;
+  font-size: 18pt;
+}
+
+h2 {
+  ont-family: Helvetica;
+  font-size: 16pt;
+}
+
+code.r{
+  font-size: 13px;
+}
+
+pre {
+  font-size: 12px
+}
+
+.question {
+  color: #008080;
+  background-color: snow;
+  font-weight: 550;
+  font-size:16px;
+}
+
+.column_name {
+  color: #708090;
+  font-weight: 300;
+  font-family: Monospace; 
+  font-style: italic;
+  font-size: 90%
+}
+
+.table_name {
+  color: #708090;
+  font-weight: 750;
+  font-family: Monospace; 
+  font-size: 90%
+}
+
+.figure_name {
+  color:  #2c3e50;
+  font-weight: lighter;
+  font-size: 90%
+}
+
+.package_name {
+  color: #BC8F8F;
+  font-family: Monospace; 
+}
