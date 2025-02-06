@@ -118,7 +118,7 @@ query_to_table <- function(
                   family = title_family )
 }
 
-# (2) () function converts SQL query or the output of dbGetQuery() 
+# (2) query_to_gt_table() function converts SQL query or the output of dbGetQuery() 
 # into a gt_tbl table using the gt() function from gt library;
 # and will be used to print one table.
 query_to_gt_table <- function(query, table_title, n = NA, col_padding = 4, font_size = 14){
