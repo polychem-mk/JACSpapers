@@ -187,7 +187,7 @@ There are three related tables in **JACS Papers 1996–2016** database.
 # To generate the HTML report from JACSpapers_1996_2016.Rmd file, 
 # we need to download the database.sqlite file from
 # https://www.kaggle.com/datasets/mathewsavage/jacs/data 
-# and save it in the projects folder.
+# and save it in the project's folder.
 
 # Create a connection to the 'database.sqlite'  file (saved in the projects folder).
 JACSpapersDB <- dbConnect(RSQLite::SQLite(), "database.sqlite")  
